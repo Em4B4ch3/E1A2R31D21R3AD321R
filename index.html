@@ -1711,7 +1711,7 @@
           </div>
 
           <div style="font-size:13px;color:var(--color-muted);text-align:center;margin-top:6px;">
-            Elegí una jugada (o elegí números) y tocá un sorteo para ver los aciertos.
+            Tocá un sorteo para ver los resultados. Si elegís una jugada o números, también se marcan los aciertos.
           </div>
 
           <div style="margin-top:12px;">
@@ -3189,13 +3189,14 @@ function abrirDetalleJugada(indice){
       cargarSelectUltimos();
       cargarSelectSorteosLotoPlus();
       cerrarModalSorteos();
-      ultimosDetalle.innerHTML = "";
       // mantener últimos números elegidos si ya había; si no, limpiar
       if(ultimosModo === "ninguno"){
         ultimosNumerosElegidos.innerHTML = "";
       } else {
         renderBalls(ultimosNumerosElegidos, ultimosNumsElegidos, null);
       }
+      // Mostrar el sorteo seleccionado aunque no haya jugada elegida
+      renderUltimosDetalle(ultimosSorteoSeleccionado);
     }
 
     function cargarSelectUltimos(){
@@ -3280,39 +3281,33 @@ function abrirDetalleJugada(indice){
     }
 
     function renderUltimosDetalle(sorteo){
-      const nums = ultimosNumsElegidos || [];
-      if(!nums.length){
-        ultimosDetalle.innerHTML = ''
-          + '<div style="margin-top:10px;padding:12px;border-radius:12px;background:var(--color-card);box-shadow:var(--shadow-soft);text-align:center;">'
-          +   '<div style="font-weight:900;margin-bottom:6px;">Primero elegí una jugada o tus 6 números</div>'
-          +   '<div style="font-size:13px;color:var(--color-muted);">Luego tocá un sorteo para ver los aciertos.</div>'
-          + '</div>';
-        return;
-      }
+      const nums = (ultimosNumsElegidos || []).map(n => String(n).padStart(2,"0"));
+      const hayNums = nums.length === 6;
 
       if(!sorteo){
         ultimosDetalle.innerHTML = ''
           + '<div style="margin-top:10px;padding:12px;border-radius:12px;background:var(--color-card);box-shadow:var(--shadow-soft);text-align:center;">'
           +   '<div style="font-weight:900;margin-bottom:6px;">Seleccioná un sorteo del listado</div>'
-          +   '<div style="font-size:13px;color:var(--color-muted);">Te mostramos cuántos aciertos hiciste en cada juego.</div>'
+          +   '<div style="font-size:13px;color:var(--color-muted);">Podés verlo sin jugada o comparar tus aciertos eligiendo una jugada.</div>'
           + '</div>';
         return;
       }
 
-      const setNums = new Set(nums.map(n => String(n).padStart(2,"0")));
+      const setNums = new Set(hayNums ? nums : []);
       const juegos = (sorteo && sorteo.juegos) ? sorteo.juegos : [];
-      const estadoCalc = calcularEstadoJugadaEnSorteo(sorteo, nums);
+      const estadoCalc = hayNums ? calcularEstadoJugadaEnSorteo(sorteo, nums) : { aciertosPozoExtra: 0 };
 
       const bloques = juegos.map(function(j){
         const oficiales = (j.numeros || []).map(x => String(x).padStart(2,"0"));
-        const aciertos = oficiales.filter(n => setNums.has(n)).length;
-        const esConsultaSiempreSale = esJuegoSiempreSale(j.nombre || "") && aciertos === 5;
+        const aciertos = hayNums ? oficiales.filter(n => setNums.has(n)).length : 0;
+        const esConsultaSiempreSale = hayNums && esJuegoSiempreSale(j.nombre || "") && aciertos === 5;
         const extraTitulo = esConsultaSiempreSale ? " (chequear)" : "";
         const claseHeader = "section-header" + (esConsultaSiempreSale ? " consulta" : "");
+        const tituloHeader = (j.nombre || "") + (hayNums ? (' • ' + aciertos + ' aciertos' + extraTitulo) : "");
 
         const bolas = oficiales.map(function(n){
           let cls = "ball";
-          if(setNums.has(n)){
+          if(hayNums && setNums.has(n)){
             cls = esConsultaSiempreSale ? "ball consulta" : "ball acierto";
           }
           return '<div class="' + cls + '">' + n + '</div>';
@@ -3320,7 +3315,7 @@ function abrirDetalleJugada(indice){
 
         return ''
           + '<div class="section" style="margin-top:10px;">'
-          +   '<div class="' + claseHeader + '">' + (j.nombre || "") + ' • ' + aciertos + ' aciertos' + extraTitulo + '</div>'
+          +   '<div class="' + claseHeader + '">' + tituloHeader + '</div>'
           +   '<div class="section-body">' + bolas + '</div>'
           + '</div>';
       }).join("");
@@ -3333,34 +3328,47 @@ function abrirDetalleJugada(indice){
       if(oficialesExtra.length){
         const setExtra = new Set(oficialesExtra);
         const bolasExtra = Array.from(setExtra).map(function(n){
-          const cls = setNums.has(n) ? "ball acierto" : "ball";
+          const cls = (hayNums && setNums.has(n)) ? "ball acierto" : "ball";
           return '<div class="' + cls + '">' + n + '</div>';
         }).join("");
 
+        const tituloExtra = "POZO EXTRA" + (hayNums ? (' • ' + (estadoCalc.aciertosPozoExtra || 0) + ' aciertos') : "");
+
         bloquePozoExtra = ''
           + '<div class="section" style="margin-top:10px;">'
-          +   '<div class="section-header">POZO EXTRA • ' + (estadoCalc.aciertosPozoExtra || 0) + ' aciertos</div>'
+          +   '<div class="section-header">' + tituloExtra + '</div>'
           +   '<div class="section-body">' + bolasExtra + '</div>'
           + '</div>';
       }
 
-      const estado = textoEstadoJugada(estadoCalc, "ultimos");
+      const bloqueTusNums = hayNums
+        ? ''
+          + '<div style="margin-top:10px;">'
+          +   '<div style="font-size:13px;font-weight:700;margin-bottom:6px;">Tus números</div>'
+          +   '<div class="section-body" id="ultimos-detalle-tusnums"></div>'
+          + '</div>'
+        : '';
+
+      const bloqueEstado = hayNums
+        ? '<div style="margin-top:12px;text-align:center;font-weight:900;font-size:16px;">' + textoEstadoJugada(estadoCalc, "ultimos") + '</div>'
+        : '<div style="margin-top:10px;text-align:center;font-weight:800;font-size:13px;color:var(--color-muted);">Resultados oficiales sin comparación de jugada.</div>';
+
       ultimosDetalle.innerHTML = ''
         + '<div class="card" style="margin-top:12px;">'
         +   '<div style="display:flex;align-items:center;justify-content:space-between;">'
-        +     '<div style="font-weight:900;font-size:16px;">Detalle de jugada</div>'
+        +     '<div style="font-weight:900;font-size:16px;">' + (hayNums ? 'Detalle de jugada' : 'Detalle del sorteo') + '</div>'
         +     '<div style="font-weight:900;color:var(--color-muted);font-size:13px;">' + sorteo.fechaTexto + ' • Sorteo ' + sorteo.numeroSorteo + '</div>'
         +   '</div>'
-        +   '<div style="margin-top:10px;">'
-        +     '<div style="font-size:13px;font-weight:700;margin-bottom:6px;">Tus números</div>'
-        +     '<div class="section-body" id="ultimos-detalle-tusnums"></div>'
-        +   '</div>'
-        +   '<div style="margin-top:12px;text-align:center;font-weight:900;font-size:16px;">' + estado + '</div>'
+        +   bloqueTusNums
+        +   bloqueEstado
         +   '<div style="margin-top:12px;font-size:13px;font-weight:800;">Resultados oficiales</div>'
         +   bloques
         +   bloquePozoExtra
         + '</div>';
-      renderBalls("ultimos-detalle-tusnums", nums.map(n=>String(n).padStart(2,"0")), null);
+
+      if(hayNums){
+        renderBalls("ultimos-detalle-tusnums", nums, null);
+      }
     }
 
     function renderGanasteElegidos(nums){
@@ -3612,6 +3620,7 @@ function abrirDetalleJugada(indice){
         ultimosModo = "ninguno";
         ultimosNumsElegidos = [];
         ultimosNumerosElegidos.innerHTML = "";
+        renderUltimosDetalle(ultimosSorteoSeleccionado);
         return;
       }
 
@@ -3621,6 +3630,7 @@ function abrirDetalleJugada(indice){
         ultimosModo = "ninguno";
         ultimosNumsElegidos = [];
         ultimosNumerosElegidos.innerHTML = "";
+        renderUltimosDetalle(ultimosSorteoSeleccionado);
         return;
       }
 
