@@ -1669,7 +1669,7 @@
           <div id="detalle-ultimo" style="margin-top:12px;"></div>
 
           <div style="margin-top:12px;text-align:center;font-weight:900;color:var(--color-muted);font-size:13px;">
-            Para verificar si alguna vez ganaste según las reglas reales de cada modalidad, usá “¿Ganaste alguna vez?”.
+            Para verificar si alguna vez ganaste (4+ aciertos o Pozo Extra), usá “¿Ganaste alguna vez?”.
           </div>
         </section>
       </section>
@@ -2616,7 +2616,7 @@ const btnTema = () => safeGet("btn-tema");
     }
 
     if(tieneConsulta){
-      return "Jugada con premio en Siempre Sale";
+      return "Chequeá en los detalles del último sorteo: si no hubo ganador con 6 en Siempre Sale, tenés premio con 5 aciertos.";
     }
 
     return contexto === "ultimo" ? "Sin premios en el último sorteo" : "Jugada sin premios";
@@ -2641,10 +2641,15 @@ const btnTema = () => safeGet("btn-tema");
         if(aciertos > maxAciertos) maxAciertos = aciertos;
 
         if(esJuegoSiempreSale(j.nombre || "")){
-          // Regla correcta: Siempre Sale tiene premio con 5 o 6 aciertos.
-          if(aciertos >= 5){
+          if(aciertos >= 6){
             ganadora = true;
             premios.push({
+              juego: "Siempre Sale",
+              aciertos: aciertos
+            });
+          }else if(aciertos === 5){
+            consultaSiempreSale = true;
+            consultas.push({
               juego: "Siempre Sale",
               aciertos: aciertos
             });
@@ -2720,7 +2725,7 @@ const btnTema = () => safeGet("btn-tema");
 
   function textoNotaResumenJugada(estado){
     if(estado && estado.ganadora) return "Con premio en último sorteo";
-    if(estado && estado.consultaSiempreSale) return "Con premio en Siempre Sale";
+    if(estado && estado.consultaSiempreSale) return "Consultar en último sorteo";
     return "Sin premio en último sorteo";
   }
 
@@ -2872,7 +2877,7 @@ const btnTema = () => safeGet("btn-tema");
     const bloques = juegos.map(function(j){
       const oficiales = (j.numeros || []).map(fmt2);
       const aciertos = oficiales.filter(function(n){ return setNums.has(n); }).length;
-      const esConsultaSiempreSale = false;
+      const esConsultaSiempreSale = esJuegoSiempreSale(j.nombre || "") && aciertos === 5;
       const extraTitulo = esConsultaSiempreSale ? " (chequear)" : "";
       const claseHeader = "section-header" + (esConsultaSiempreSale ? " consulta" : "");
 
@@ -3137,20 +3142,6 @@ function abrirDetalleJugada(indice){
     });
   }
 
-  function esPremioValidoGanaste(nombreJuego, aciertos){
-    const nombre = String(nombreJuego || "").toLowerCase();
-    const ac = Number(aciertos || 0);
-
-    // Reglas reales de premios para ¿Ganaste alguna vez?
-    if(nombre.indexOf("pozo") !== -1 && nombre.indexOf("extra") !== -1) return ac === 6;
-    if(nombre.indexOf("revancha") !== -1) return ac === 6;
-    if(nombre.indexOf("siempre") !== -1 && nombre.indexOf("sale") !== -1) return ac === 5 || ac === 6;
-    if(nombre.indexOf("segunda") !== -1) return ac === 4 || ac === 5 || ac === 6;
-    if(nombre.indexOf("tradicional") !== -1 || nombre.indexOf("primer sorteo") !== -1) return ac === 4 || ac === 5 || ac === 6;
-
-    return false;
-  }
-
   function verificarContraHistorialCompleto(numeros){
     precalcularHistorial();
 
@@ -3158,36 +3149,26 @@ function abrirDetalleJugada(indice){
     const hits = [];
 
     HIST_PRECALC.forEach(s => {
-      // por juego: Tradicional 4/5/6, Segunda 4/5/6, Revancha 6, Siempre Sale 5/6
+      // por juego
       s.juegos.forEach(j => {
-        const numerosAcertados = [];
-        nums.forEach(n => { if (j.set.has(n)) numerosAcertados.push(n); });
-        const ac = numerosAcertados.length;
+        let ac = 0;
+        nums.forEach(n => { if (j.set.has(n)) ac++; });
 
-        if (esPremioValidoGanaste(j.nombre, ac)) {
-          hits.push({
-            sorteo:s.numeroSorteo,
-            fecha:s.fechaTexto,
-            juego:j.nombre,
-            aciertos:ac,
-            numerosAcertados:numerosAcertados,
-            numerosOficiales:j.numeros || []
-          });
+        const nombre = String(j.nombre || "").toLowerCase();
+        let gana = false;
+        // Modo análisis: mostrar coincidencias desde 4 aciertos en todos los juegos
+        gana = (ac >= 4);
+
+        if (gana) {
+          hits.push({ sorteo:s.numeroSorteo, fecha:s.fechaTexto, juego:j.nombre, aciertos:ac });
         }
       });
 
-      // Pozo Extra: 6 aciertos entre los números de T1 + Segunda + Revancha
-      const numerosAcertadosExtra = [];
-      nums.forEach(n => { if (s.set18.has(n)) numerosAcertadosExtra.push(n); });
-      if (numerosAcertadosExtra.length === 6) {
-        hits.push({
-          sorteo:s.numeroSorteo,
-          fecha:s.fechaTexto,
-          juego:"Pozo Extra",
-          aciertos:6,
-          numerosAcertados:numerosAcertadosExtra,
-          numerosOficiales:Array.from(s.set18)
-        });
+      // Pozo extra: números únicos de T1+T2+Revancha
+      let ac18 = 0;
+      s.set18.forEach(n => { if (nums.indexOf(n) !== -1) ac18++; });
+      if (ac18 === 6) {
+        hits.push({ sorteo:s.numeroSorteo, fecha:s.fechaTexto, juego:"Pozo Extra", aciertos:6 });
       }
     });
 
@@ -3319,7 +3300,7 @@ function abrirDetalleJugada(indice){
       const bloques = juegos.map(function(j){
         const oficiales = (j.numeros || []).map(x => String(x).padStart(2,"0"));
         const aciertos = hayNums ? oficiales.filter(n => setNums.has(n)).length : 0;
-        const esConsultaSiempreSale = false;
+        const esConsultaSiempreSale = hayNums && esJuegoSiempreSale(j.nombre || "") && aciertos === 5;
         const extraTitulo = esConsultaSiempreSale ? " (chequear)" : "";
         const claseHeader = "section-header" + (esConsultaSiempreSale ? " consulta" : "");
         const tituloHeader = (j.nombre || "") + (hayNums ? (' • ' + aciertos + ' aciertos' + extraTitulo) : "");
@@ -3430,44 +3411,20 @@ function abrirDetalleJugada(indice){
     det.innerHTML = "";
 
     if (!Array.isArray(hits) || !hits.length) {
-      out.textContent = "No se encontraron premios en el historial.";
+      out.textContent = "No se encontraron coincidencias (4+ aciertos) en el historial.";
       return;
     }
 
-    function bolasHTML(numeros, acertados){
-      const setAciertos = new Set((acertados || []).map(fmt2));
-      return (numeros || []).map(fmt2).map(function(n){
-        const cls = setAciertos.has(n) ? "ball acierto" : "ball";
-        return '<div class="' + cls + '">' + n + '</div>';
-      }).join("");
-    }
-
-    out.textContent = "¡Encontramos premios! Tocá uno para ver los números acertados.";
+    out.textContent = "¡Encontramos coincidencias!";
     hits.slice(0, 100).forEach(h => {
       const row = document.createElement("div");
       row.className = "jugada-item";
-      row.style.cursor = "pointer";
-
-      const acertados = (h.numerosAcertados || []).map(fmt2);
-      const oficiales = (h.numerosOficiales || []).map(fmt2);
-      const detalleId = "det-ganaste-" + String(h.sorteo || "") + "-" + String(h.juego || "").replace(/[^a-z0-9]+/gi,"-") + "-" + Math.random().toString(36).slice(2,7);
-
+      row.style.cursor = "default";
       row.innerHTML =
         '<div class="jugada-info">' +
           '<div class="jugada-titulo">' + h.juego + '</div>' +
           '<div class="jugada-numeros">' + h.fecha + ' · Sorteo ' + h.sorteo + ' · ' + h.aciertos + ' aciertos</div>' +
-          '<div class="jugada-nota">Tocá para ver números acertados</div>' +
-          '<div id="' + detalleId + '" style="display:none;margin-top:10px;">' +
-            '<div style="font-size:12px;font-weight:900;margin-bottom:6px;color:#111;">Acertaste: ' + (acertados.length ? acertados.join(" - ") : "—") + '</div>' +
-            '<div class="section-body" style="padding:0;justify-content:flex-start;">' + bolasHTML(oficiales, acertados) + '</div>' +
-          '</div>' +
         '</div>';
-
-      row.addEventListener("click", function(){
-        const box = safeGet(detalleId);
-        if(box) box.style.display = (box.style.display === "none" ? "block" : "none");
-      });
-
       det.appendChild(row);
     });
 
@@ -3478,7 +3435,7 @@ function abrirDetalleJugada(indice){
       note.style.fontSize = "12px";
       note.style.fontWeight = "800";
       note.style.marginTop = "8px";
-      note.textContent = "Mostrando los primeros 100 premios encontrados...";
+      note.textContent = "Mostrando las primeras 100 coincidencias...";
       det.appendChild(note);
     }
   }
