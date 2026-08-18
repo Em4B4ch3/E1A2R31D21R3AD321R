@@ -1669,7 +1669,7 @@
           <div id="detalle-ultimo" style="margin-top:12px;"></div>
 
           <div style="margin-top:12px;text-align:center;font-weight:900;color:var(--color-muted);font-size:13px;">
-            Para verificar si alguna vez ganaste (4+ aciertos o Pozo Extra), usá “¿Ganaste alguna vez?”.
+            Para verificar si alguna vez ganaste según las reglas reales de cada modalidad, usá “¿Ganaste alguna vez?”.
           </div>
         </section>
       </section>
@@ -2616,7 +2616,7 @@ const btnTema = () => safeGet("btn-tema");
     }
 
     if(tieneConsulta){
-      return "Chequeá en los detalles del último sorteo: si no hubo ganador con 6 en Siempre Sale, tenés premio con 5 aciertos.";
+      return "Jugada con premio en Siempre Sale";
     }
 
     return contexto === "ultimo" ? "Sin premios en el último sorteo" : "Jugada sin premios";
@@ -2641,15 +2641,10 @@ const btnTema = () => safeGet("btn-tema");
         if(aciertos > maxAciertos) maxAciertos = aciertos;
 
         if(esJuegoSiempreSale(j.nombre || "")){
-          if(aciertos >= 6){
+          // Regla correcta: Siempre Sale tiene premio con 5 o 6 aciertos.
+          if(aciertos >= 5){
             ganadora = true;
             premios.push({
-              juego: "Siempre Sale",
-              aciertos: aciertos
-            });
-          }else if(aciertos === 5){
-            consultaSiempreSale = true;
-            consultas.push({
               juego: "Siempre Sale",
               aciertos: aciertos
             });
@@ -2725,7 +2720,7 @@ const btnTema = () => safeGet("btn-tema");
 
   function textoNotaResumenJugada(estado){
     if(estado && estado.ganadora) return "Con premio en último sorteo";
-    if(estado && estado.consultaSiempreSale) return "Consultar en último sorteo";
+    if(estado && estado.consultaSiempreSale) return "Con premio en Siempre Sale";
     return "Sin premio en último sorteo";
   }
 
@@ -2877,7 +2872,7 @@ const btnTema = () => safeGet("btn-tema");
     const bloques = juegos.map(function(j){
       const oficiales = (j.numeros || []).map(fmt2);
       const aciertos = oficiales.filter(function(n){ return setNums.has(n); }).length;
-      const esConsultaSiempreSale = esJuegoSiempreSale(j.nombre || "") && aciertos === 5;
+      const esConsultaSiempreSale = false;
       const extraTitulo = esConsultaSiempreSale ? " (chequear)" : "";
       const claseHeader = "section-header" + (esConsultaSiempreSale ? " consulta" : "");
 
@@ -3142,6 +3137,20 @@ function abrirDetalleJugada(indice){
     });
   }
 
+  function esPremioValidoGanaste(nombreJuego, aciertos){
+    const nombre = String(nombreJuego || "").toLowerCase();
+    const ac = Number(aciertos || 0);
+
+    // Reglas reales de premios para ¿Ganaste alguna vez?
+    if(nombre.indexOf("pozo") !== -1 && nombre.indexOf("extra") !== -1) return ac === 6;
+    if(nombre.indexOf("revancha") !== -1) return ac === 6;
+    if(nombre.indexOf("siempre") !== -1 && nombre.indexOf("sale") !== -1) return ac === 5 || ac === 6;
+    if(nombre.indexOf("segunda") !== -1) return ac === 4 || ac === 5 || ac === 6;
+    if(nombre.indexOf("tradicional") !== -1 || nombre.indexOf("primer sorteo") !== -1) return ac === 4 || ac === 5 || ac === 6;
+
+    return false;
+  }
+
   function verificarContraHistorialCompleto(numeros){
     precalcularHistorial();
 
@@ -3149,26 +3158,36 @@ function abrirDetalleJugada(indice){
     const hits = [];
 
     HIST_PRECALC.forEach(s => {
-      // por juego
+      // por juego: Tradicional 4/5/6, Segunda 4/5/6, Revancha 6, Siempre Sale 5/6
       s.juegos.forEach(j => {
-        let ac = 0;
-        nums.forEach(n => { if (j.set.has(n)) ac++; });
+        const numerosAcertados = [];
+        nums.forEach(n => { if (j.set.has(n)) numerosAcertados.push(n); });
+        const ac = numerosAcertados.length;
 
-        const nombre = String(j.nombre || "").toLowerCase();
-        let gana = false;
-        // Modo análisis: mostrar coincidencias desde 4 aciertos en todos los juegos
-        gana = (ac >= 4);
-
-        if (gana) {
-          hits.push({ sorteo:s.numeroSorteo, fecha:s.fechaTexto, juego:j.nombre, aciertos:ac });
+        if (esPremioValidoGanaste(j.nombre, ac)) {
+          hits.push({
+            sorteo:s.numeroSorteo,
+            fecha:s.fechaTexto,
+            juego:j.nombre,
+            aciertos:ac,
+            numerosAcertados:numerosAcertados,
+            numerosOficiales:j.numeros || []
+          });
         }
       });
 
-      // Pozo extra: números únicos de T1+T2+Revancha
-      let ac18 = 0;
-      s.set18.forEach(n => { if (nums.indexOf(n) !== -1) ac18++; });
-      if (ac18 === 6) {
-        hits.push({ sorteo:s.numeroSorteo, fecha:s.fechaTexto, juego:"Pozo Extra", aciertos:6 });
+      // Pozo Extra: 6 aciertos entre los números de T1 + Segunda + Revancha
+      const numerosAcertadosExtra = [];
+      nums.forEach(n => { if (s.set18.has(n)) numerosAcertadosExtra.push(n); });
+      if (numerosAcertadosExtra.length === 6) {
+        hits.push({
+          sorteo:s.numeroSorteo,
+          fecha:s.fechaTexto,
+          juego:"Pozo Extra",
+          aciertos:6,
+          numerosAcertados:numerosAcertadosExtra,
+          numerosOficiales:Array.from(s.set18)
+        });
       }
     });
 
@@ -3300,7 +3319,7 @@ function abrirDetalleJugada(indice){
       const bloques = juegos.map(function(j){
         const oficiales = (j.numeros || []).map(x => String(x).padStart(2,"0"));
         const aciertos = hayNums ? oficiales.filter(n => setNums.has(n)).length : 0;
-        const esConsultaSiempreSale = hayNums && esJuegoSiempreSale(j.nombre || "") && aciertos === 5;
+        const esConsultaSiempreSale = false;
         const extraTitulo = esConsultaSiempreSale ? " (chequear)" : "";
         const claseHeader = "section-header" + (esConsultaSiempreSale ? " consulta" : "");
         const tituloHeader = (j.nombre || "") + (hayNums ? (' • ' + aciertos + ' aciertos' + extraTitulo) : "");
@@ -3411,20 +3430,44 @@ function abrirDetalleJugada(indice){
     det.innerHTML = "";
 
     if (!Array.isArray(hits) || !hits.length) {
-      out.textContent = "No se encontraron coincidencias (4+ aciertos) en el historial.";
+      out.textContent = "No se encontraron premios en el historial.";
       return;
     }
 
-    out.textContent = "¡Encontramos coincidencias!";
+    function bolasHTML(numeros, acertados){
+      const setAciertos = new Set((acertados || []).map(fmt2));
+      return (numeros || []).map(fmt2).map(function(n){
+        const cls = setAciertos.has(n) ? "ball acierto" : "ball";
+        return '<div class="' + cls + '">' + n + '</div>';
+      }).join("");
+    }
+
+    out.textContent = "¡Encontramos premios! Tocá uno para ver los números acertados.";
     hits.slice(0, 100).forEach(h => {
       const row = document.createElement("div");
       row.className = "jugada-item";
-      row.style.cursor = "default";
+      row.style.cursor = "pointer";
+
+      const acertados = (h.numerosAcertados || []).map(fmt2);
+      const oficiales = (h.numerosOficiales || []).map(fmt2);
+      const detalleId = "det-ganaste-" + String(h.sorteo || "") + "-" + String(h.juego || "").replace(/[^a-z0-9]+/gi,"-") + "-" + Math.random().toString(36).slice(2,7);
+
       row.innerHTML =
         '<div class="jugada-info">' +
           '<div class="jugada-titulo">' + h.juego + '</div>' +
           '<div class="jugada-numeros">' + h.fecha + ' · Sorteo ' + h.sorteo + ' · ' + h.aciertos + ' aciertos</div>' +
+          '<div class="jugada-nota">Tocá para ver números acertados</div>' +
+          '<div id="' + detalleId + '" style="display:none;margin-top:10px;">' +
+            '<div style="font-size:12px;font-weight:900;margin-bottom:6px;color:#111;">Acertaste: ' + (acertados.length ? acertados.join(" - ") : "—") + '</div>' +
+            '<div class="section-body" style="padding:0;justify-content:flex-start;">' + bolasHTML(oficiales, acertados) + '</div>' +
+          '</div>' +
         '</div>';
+
+      row.addEventListener("click", function(){
+        const box = safeGet(detalleId);
+        if(box) box.style.display = (box.style.display === "none" ? "block" : "none");
+      });
+
       det.appendChild(row);
     });
 
@@ -3435,7 +3478,7 @@ function abrirDetalleJugada(indice){
       note.style.fontSize = "12px";
       note.style.fontWeight = "800";
       note.style.marginTop = "8px";
-      note.textContent = "Mostrando las primeras 100 coincidencias...";
+      note.textContent = "Mostrando los primeros 100 premios encontrados...";
       det.appendChild(note);
     }
   }
@@ -3901,7 +3944,7 @@ frames.wa.srcdoc = `<!DOCTYPE html>
     color:var(--text);
   }
   .wrap{
-    padding:14px 14px 18px;
+    padding:8px 14px 12px;
     max-width:520px;
     margin:0 auto;
   }
@@ -3909,7 +3952,7 @@ frames.wa.srcdoc = `<!DOCTYPE html>
     background:var(--card);
     border-radius:22px;
     box-shadow:var(--shadow);
-    padding:14px;
+    padding:10px 14px 12px;
   }
   .wheelBox{
     position:relative;
@@ -3917,11 +3960,11 @@ frames.wa.srcdoc = `<!DOCTYPE html>
     display:flex;
     align-items:center;
     justify-content:center;
-    padding:8px 0 6px;
+    padding:0 0 2px;
   }
   #wheel{
-    width:200px;
-    height:200px;
+    width:155px;
+    height:155px;
     border-radius:50%;
     background:
       conic-gradient(#f3f3f3 0 25deg,#e7e7e7 25deg 50deg,#f3f3f3 50deg 75deg,#e7e7e7 75deg 100deg,
@@ -3940,7 +3983,7 @@ frames.wa.srcdoc = `<!DOCTYPE html>
   }
   .hub{
     position:absolute;
-    width:54px;height:54px;border-radius:50%;
+    width:42px;height:42px;border-radius:50%;
     background:rgba(255,255,255,.65);
     left:50%;top:50%;transform:translate(-50%,-50%);
     box-shadow: inset 0 0 0 10px rgba(0,0,0,.06);
@@ -3948,18 +3991,18 @@ frames.wa.srcdoc = `<!DOCTYPE html>
   }
   .hub span{
     display:inline-block;
-    width:20px;height:20px;border-radius:50%;
+    width:16px;height:16px;border-radius:50%;
     background:radial-gradient(circle at 35% 30%, #fff 0, #f4f4f4 40%, #dcdcdc 100%);
     box-shadow:0 3px 10px rgba(0,0,0,.2);
   }
   .pointer{
     position:absolute;
-    top:2px; left:50%;
+    top:-1px; left:50%;
     transform:translateX(-50%);
     width:0;height:0;
-    border-left:10px solid transparent;
-    border-right:10px solid transparent;
-    border-bottom:16px solid #fff;
+    border-left:8px solid transparent;
+    border-right:8px solid transparent;
+    border-bottom:13px solid #fff;
     filter:drop-shadow(0 6px 10px rgba(0,0,0,.35));
   }
   .spin{
@@ -3971,24 +4014,24 @@ frames.wa.srcdoc = `<!DOCTYPE html>
   }
 
   h2{
-    margin:10px 0 10px;
-    font-size:24px;
+    margin:4px 0 6px;
+    font-size:22px;
     font-weight:800;
     letter-spacing:.2px;
   }
   .balls{
     display:flex;
     flex-wrap:wrap;
-    gap:10px;
-    margin:4px 0 10px;
+    gap:8px;
+    margin:2px 0 8px;
   }
   .ball{
-    width:48px;height:48px;border-radius:50%;
+    width:42px;height:42px;border-radius:50%;
     background:radial-gradient(circle at 35% 30%, #fff 0, #f3f3f3 45%, #dcdcdc 100%);
     box-shadow:0 10px 18px rgba(0,0,0,.12);
     display:flex;align-items:center;justify-content:center;
     font-weight:900;
-    font-size:20px;
+    font-size:18px;
     color:#222;
     opacity:0;
     transform:translateY(10px) scale(.92);
@@ -4000,16 +4043,16 @@ frames.wa.srcdoc = `<!DOCTYPE html>
   }
   .btnRow{
     display:flex;
-    gap:10px;
+    gap:8px;
     flex-wrap:wrap;
-    margin:8px 0 10px;
+    margin:6px 0 8px;
   }
   .btn{
     border:0;
-    border-radius:14px;
-    padding:12px 16px;
+    border-radius:13px;
+    padding:10px 14px;
     font-weight:800;
-    font-size:18px;
+    font-size:17px;
     box-shadow:0 10px 20px rgba(0,0,0,.12);
     cursor:pointer;
   }
@@ -4021,30 +4064,30 @@ frames.wa.srcdoc = `<!DOCTYPE html>
   .combo{
     border:2px dashed rgba(0,0,0,.12);
     border-radius:18px;
-    padding:12px;
-    margin-top:10px;
+    padding:10px;
+    margin-top:6px;
   }
   .comboTop{
     display:flex;
     align-items:center;
     justify-content:space-between;
-    gap:10px;
+    gap:8px;
   }
   .comboTop h3{
     margin:0;
-    font-size:22px;
+    font-size:20px;
     font-weight:900;
   }
   .toggle{
     border:1px solid rgba(0,0,0,.15);
     background:#fff;
     border-radius:999px;
-    padding:8px 12px;
+    padding:7px 11px;
     font-weight:800;
     cursor:pointer;
   }
-  .comboBody{ margin-top:10px; }
-  .chips{ display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .comboBody{ margin-top:8px; }
+  .chips{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
   .chip{
     background:#fff;
     border:1px solid rgba(0,0,0,.14);
@@ -4062,10 +4105,10 @@ frames.wa.srcdoc = `<!DOCTYPE html>
     cursor:pointer;
   }
   .msg{
-    margin-top:10px;
-    border-radius:14px;
-    padding:10px 12px;
-    font-size:16px;
+    margin-top:8px;
+    border-radius:13px;
+    padding:9px 11px;
+    font-size:15px;
     border:1px solid rgba(0,0,0,.12);
     color:#222;
     background:#fff;
