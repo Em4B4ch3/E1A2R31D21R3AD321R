@@ -116,6 +116,33 @@
     ruleta: document.getElementById("tab-ruleta"),
   };
 
+  // Las secciones se crean una sola vez, cuando se abren por primera vez.
+  // Se conserva su documento para mantener formularios, jugadas y ruleta.
+  const paginas = Object.create(null);
+  const estadoSecciones = Object.create(null);
+  Object.keys(frames).forEach(function(k){
+    estadoSecciones[k] = { solicitada:false, lista:false, pendientes:[] };
+  });
+
+  function cargarSeccion(key){
+    const estado = estadoSecciones[key];
+    if(!estado || estado.solicitada) return;
+    estado.solicitada = true;
+    frames[key].srcdoc = paginas[key]();
+    paginas[key] = null;
+  }
+
+  function enviarASeccion(key, mensaje){
+    const estado = estadoSecciones[key];
+    if(!estado) return;
+    if(estado.lista){
+      frames[key].contentWindow.postMessage(mensaje, "*");
+    }else{
+      estado.pendientes.push(mensaje);
+      cargarSeccion(key);
+    }
+  }
+
   // ===== MODO NOCTURNO GLOBAL (sincroniza todas las secciones/iframes) =====
   const STORAGE_TEMA_GLOBAL = "quini6_tema_global";
 
@@ -156,12 +183,21 @@
 
   Object.keys(frames).forEach(function(k){
     frames[k].addEventListener("load", function(){
-      setTimeout(function(){ aplicarTemaAFrame(frames[k], temaActualGlobal()); }, 0);
+      const estado = estadoSecciones[k];
+      const doc = frames[k].contentDocument;
+      // Ignora la carga inicial de about:blank: todavía no hay una sección lista.
+      if(!estado.solicitada || !doc || !doc.documentElement ||
+          doc.documentElement.getAttribute("data-quini-tab") !== k) return;
+      estado.lista = true;
+      aplicarTemaAFrame(frames[k], temaActualGlobal());
+      estado.pendientes.splice(0).forEach(function(mensaje){
+        frames[k].contentWindow.postMessage(mensaje, "*");
+      });
     });
   });
 
-  frames.ultimo.srcdoc = `<!DOCTYPE html>
-<html lang="es">
+  paginas.ultimo = function(){ return `<!DOCTYPE html>
+<html lang="es" data-quini-tab="ultimo">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -750,9 +786,9 @@
   <\/script>
 </body>
 </html>
-`;
-  frames.jugadas.srcdoc = `<!DOCTYPE html>
-<html lang="es">
+`; };
+  paginas.jugadas = function(){ return `<!DOCTYPE html>
+<html lang="es" data-quini-tab="jugadas">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -2043,13 +2079,16 @@
       if(subt) subt.textContent = texto || "";
     }
 
+    let ultimos10Cache = null;
     function getUltimos10(){
+      if(ultimos10Cache) return ultimos10Cache;
       const arr = Array.isArray(HISTORIAL_COMPLETO) ? HISTORIAL_COMPLETO : [];
       // ⚠️ No dependemos del orden del historial: ordenamos por número de sorteo (desc)
-      return arr
+      ultimos10Cache = arr
         .slice()
         .sort(function(a,b){ return Number(b.numeroSorteo) - Number(a.numeroSorteo); })
         .slice(0, 10);
+      return ultimos10Cache;
     }
 
   // ✅ Historial completo pegado (desde 02/11/2011) - NO se muestra en UI
@@ -2233,8 +2272,8 @@ const btnTema = () => safeGet("btn-tema");
       .sort(function(a,b){ return (a.t - b.t) || (a.i - b.i); });
   }
 
-  function ordenVisualJugadas(){
-    const favs = favoritosOrdenados();
+  function ordenVisualJugadas(favoritos){
+    const favs = favoritos || favoritosOrdenados();
     const usados = new Set(favs.map(function(x){ return x.i; }));
     const normales = (jugadas || [])
       .map(function(j, i){ return i; })
@@ -2735,11 +2774,14 @@ const btnTema = () => safeGet("btn-tema");
       return;
     }
 
-    ordenVisualJugadas().forEach((i) => {
+    const favoritos = favoritosOrdenados();
+    const numerosFavoritos = new Map(favoritos.map(function(f, i){ return [f.i, i + 1]; }));
+    const fragmento = document.createDocumentFragment();
+    ordenVisualJugadas(favoritos).forEach((i) => {
       const j = jugadas[i];
       if(!j) return;
       const estado = calcularEstadoJugadaUltimoSorteo(j.numeros || []);
-      const favNro = numeroFavoritoPorIndice(i);
+      const favNro = numerosFavoritos.get(i) || "";
 
       const item = document.createElement("div");
       item.className = "jugada-item " + (estado.ganadora ? "jugada-ganadora" : (estado.consultaSiempreSale ? "jugada-pendiente" : "jugada-perdedora"));
@@ -2816,15 +2858,18 @@ const btnTema = () => safeGet("btn-tema");
 
       item.addEventListener("click", () => abrirDetalleJugada(i));
 
-      lista.appendChild(item);
+      fragmento.appendChild(item);
     });
+    lista.appendChild(fragmento);
   }
 
   
 // ========= Detalle simple =========
 
 
+  let ultimoSorteoCache;
   function obtenerUltimoSorteo(){
+    if(ultimoSorteoCache !== undefined) return ultimoSorteoCache;
     try{
       let best = null;
 
@@ -2838,7 +2883,7 @@ const btnTema = () => safeGet("btn-tema");
 
       if(typeof DATOS !== "undefined" && DATOS && DATOS.numeroSorteo){
         if(!best || Number(DATOS.numeroSorteo) >= Number(best.numeroSorteo)){
-          return {
+          return ultimoSorteoCache = {
             fechaTexto: DATOS.fechaTexto ? String(DATOS.fechaTexto).replace(/^\w+\s+/,'') : "",
             numeroSorteo: String(DATOS.numeroSorteo),
             juegos: Array.isArray(DATOS.juegos) ? DATOS.juegos : [],
@@ -2847,9 +2892,9 @@ const btnTema = () => safeGet("btn-tema");
         }
       }
 
-      return best;
+      return ultimoSorteoCache = best;
     }catch(e){
-      return null;
+      return ultimoSorteoCache = null;
     }
   }
 
@@ -2979,6 +3024,7 @@ function abrirDetalleJugada(indice){
   }
 
   function abrirPicker(opts){
+    construirGrilla();
     pickerTitle().textContent = (opts && opts.title) ? opts.title : "Elegí tus 6 números";
     pickerSelected = Array.isArray(opts && opts.initial) ? opts.initial.map(fmt2).slice(0,6) : [];
     pickerOnDone = (opts && typeof opts.onDone === "function") ? opts.onDone : null;
@@ -3010,8 +3056,10 @@ function abrirDetalleJugada(indice){
     }
   }
 
+  let pickerConstruido = false;
   function construirGrilla(){
-    pickerGrid().innerHTML = "";
+    if(pickerConstruido) return;
+    const fragmento = document.createDocumentFragment();
     for (let i = 0; i <= 45; i++) {
       const n = fmt2(i);
       const btn = document.createElement("button");
@@ -3020,8 +3068,10 @@ function abrirDetalleJugada(indice){
       btn.setAttribute("data-n", n);
       btn.textContent = n;
       btn.addEventListener("click", () => toggleNumero(n));
-      pickerGrid().appendChild(btn);
+      fragmento.appendChild(btn);
     }
+    pickerGrid().appendChild(fragmento);
+    pickerConstruido = true;
   }
 
   // ========= Modal editar =========
@@ -3120,11 +3170,10 @@ function abrirDetalleJugada(indice){
   function precalcularHistorial(){
     if (HIST_PRECALC) return;
     HIST_PRECALC = (HISTORIAL_COMPLETO || []).map(s => {
-      const juegos = (s.juegos || []).map(j => ({
-        nombre: j.nombre,
-        numeros: (j.numeros || []).map(fmt2),
-        set: new Set((j.numeros || []).map(fmt2)),
-      }));
+      const juegos = (s.juegos || []).map(j => {
+        const numeros = (j.numeros || []).map(fmt2);
+        return { nombre:j.nombre, numeros:numeros, set:new Set(numeros) };
+      });
       const juegos3 = juegos.slice(0,3);
       const set18 = new Set();
       juegos3.forEach(j => j.numeros.forEach(n => set18.add(n)));
@@ -3727,7 +3776,6 @@ function abrirDetalleJugada(indice){
   function init(){
     cargarTema();
     cargarJugadas();
-    construirGrilla();
     renderizarJugadas();
     bindEvents();
 
@@ -3761,9 +3809,9 @@ function abrirDetalleJugada(indice){
 <\/script>
 </body>
 </html>
-`;
-frames.wa.srcdoc = `<!DOCTYPE html>
-<html lang="es">
+`; };
+paginas.wa = function(){ return `<!DOCTYPE html>
+<html lang="es" data-quini-tab="wa">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -3919,9 +3967,9 @@ frames.wa.srcdoc = `<!DOCTYPE html>
 <\/script>
 </body>
 </html>
-`;
-  frames.ruleta.srcdoc = `<!DOCTYPE html>
-<html lang="es">
+`; };
+  paginas.ruleta = function(){ return `<!DOCTYPE html>
+<html lang="es" data-quini-tab="ruleta">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -4422,13 +4470,26 @@ body.dark{
       return MIN;
     }
 
+    let bolasRuleta = null;
     function renderBalls(list, revealCount){
-      ballsEl.innerHTML = "";
+      if(!bolasRuleta){
+        bolasRuleta = [];
+        const fragmento = document.createDocumentFragment();
+        for(let i=0;i<PICK;i++){
+          const div = document.createElement("div");
+          div.className = "ball";
+          // Conserva la aparición inmediata original, sin adelantar números al reiniciar.
+          div.style.transition = "none";
+          bolasRuleta.push(div);
+          fragmento.appendChild(div);
+        }
+        ballsEl.appendChild(fragmento);
+      }
       for(let i=0;i<PICK;i++){
-        const div = document.createElement("div");
-        div.className = "ball" + (i < revealCount ? " show" : "");
-        div.textContent = i < list.length ? fmt2(list[i]) : "";
-        ballsEl.appendChild(div);
+        const div = bolasRuleta[i];
+        const texto = i < list.length ? fmt2(list[i]) : "";
+        if(div.textContent !== texto) div.textContent = texto;
+        div.classList.toggle("show", i < revealCount);
       }
     }
 
@@ -4531,6 +4592,7 @@ body.dark{
 
     function openModal(){
       if(busy) return;
+      buildGrid();
       modal.classList.add("show");
       modal.setAttribute("aria-hidden","false");
       refreshGrid();
@@ -4549,8 +4611,10 @@ body.dark{
       });
     }
 
+    let gridBuilt = false;
     function buildGrid(){
-      gridEl.innerHTML = "";
+      if(gridBuilt) return;
+      const fragmento = document.createDocumentFragment();
       for(let n=MIN;n<=MAX;n++){
         const b = document.createElement("button");
         b.type = "button";
@@ -4571,8 +4635,10 @@ body.dark{
             setTimeout(closeModal, 180);
           }
         });
-        gridEl.appendChild(b);
+        fragmento.appendChild(b);
       }
+      gridEl.appendChild(fragmento);
+      gridBuilt = true;
     }
 
     function renderChips(){
@@ -4648,12 +4714,11 @@ body.dark{
     modalCloseX.addEventListener("click", closeModal);
     modal.addEventListener("click", (e)=>{ if(e.target === modal) closeModal(); });
 
-    buildGrid();
     doClear();
   })();
   <\/script>
 </body>
-</html>`;
+</html>`; };
 
   const btns = {
     ultimo: document.getElementById("btn-ultimo"),
@@ -4716,7 +4781,9 @@ body.dark{
     if(d.type === "JUGADA_GUARDADA"){
       try{
         // refrescar Jugadas al instante
-        frames.jugadas && frames.jugadas.contentWindow && frames.jugadas.contentWindow.postMessage({type:"REFRESH_JUGADAS"}, "*");
+        if(estadoSecciones.jugadas.solicitada && ev.source !== frames.jugadas.contentWindow){
+          enviarASeccion("jugadas", {type:"REFRESH_JUGADAS"});
+        }
       }catch(e){}
       showToast("Jugada agregada ✅");
       return;
@@ -4729,6 +4796,8 @@ body.dark{
   });
 
   function setActive(key){
+    if(!frames[key]) return;
+    cargarSeccion(key);
     Object.keys(frames).forEach(k=>frames[k].classList.toggle("active", k===key));
     Object.keys(btns).forEach(k=>btns[k].classList.toggle("active", k===key));
   }
@@ -4751,17 +4820,12 @@ btns.wa.addEventListener("click", ()=>setActive("wa"));
       const norm = nums.map(n => String(parseInt(n,10)).padStart(2,"0"));
       setActive("jugadas");
       showToast("Elegí un nombre para guardar");
-      setTimeout(function(){
-        try{
-          if(frames.jugadas && frames.jugadas.contentWindow){
-            frames.jugadas.contentWindow.postMessage({type:"OPEN_SAVE_JUGADA", numbers:norm}, "*");
-          }
-        }catch(e){}
-      }, 180);
+      enviarASeccion("jugadas", {type:"OPEN_SAVE_JUGADA", numbers:norm});
     }
   });
 
   window.aplicarTemaGlobalQuini(temaActualGlobal());
+  setActive("ultimo");
 
 })();
 </script>
