@@ -1684,6 +1684,7 @@
           <button class="btn-secondary-full" id="btn-ir-ganaste">¿Ganaste alguna vez?</button>
 
           <button class="btn-secondary-full" id="btn-ir-ultimos">Últimos sorteos</button>
+          <button class="btn-secondary-full" id="btn-ir-cabala">Cabulear con una fecha</button>
 
         </section>
       </section>
@@ -1777,6 +1778,30 @@
           </div>
 
           <div id="ultimos-detalle" style="margin-top:14px;"></div>
+        </section>
+      </section>
+
+      <!-- PANTALLA: CABULEAR CON UNA FECHA (utiliza el historial existente) -->
+      <section id="pantalla-cabala" class="oculta">
+        <section class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <button class="btn-simple" id="btn-volver-cabala">← Volver</button>
+            <h2 style="text-align:center;">Cabulear</h2>
+            <span style="width:70px;"></span>
+          </div>
+
+          <div style="font-size:13px;color:var(--color-muted);text-align:center;margin-top:6px;">
+            Elegí una fecha para conocer los números de ese día o de los sorteos más cercanos.
+          </div>
+
+          <div style="margin-top:14px;">
+            <label for="cabala-fecha" style="display:block;font-size:13px;font-weight:900;margin-bottom:8px;">Elegí una fecha</label>
+            <input type="date" id="cabala-fecha" lang="es-AR" style="width:100%;padding:12px;border-radius:12px;border:1px solid #ddd;font-size:16px;font-weight:800;background:var(--color-card);color:var(--color-text);color-scheme:normal;" />
+            <button class="btn-add" id="btn-buscar-cabala" type="button" style="margin-top:10px;">Buscar sorteos</button>
+          </div>
+
+          <div id="cabala-estado" role="status" aria-live="polite" style="text-align:center;font-size:13px;font-weight:800;color:var(--color-muted);margin-top:14px;"></div>
+          <div id="cabala-resultados" style="margin-top:10px;"></div>
         </section>
       </section>
 
@@ -2547,7 +2572,7 @@ const btnTema = () => safeGet("btn-tema");
 
   // ========= Navegación pantallas =========
   function mostrarPantalla(idPantalla){
-    const ids = ["pantalla-jugadas","pantalla-detalle","pantalla-ganaste","pantalla-ultimos"];
+    const ids = ["pantalla-jugadas","pantalla-detalle","pantalla-ganaste","pantalla-ultimos","pantalla-cabala"];
     ids.forEach(id => safeGet(id).classList.add("oculta"));
     safeGet(idPantalla).classList.remove("oculta");
 
@@ -2556,6 +2581,7 @@ const btnTema = () => safeGet("btn-tema");
     if (idPantalla === "pantalla-detalle") subt.textContent = "Detalle";
     if (idPantalla === "pantalla-ganaste") subt.textContent = "¿Ganaste alguna vez?";
     if (idPantalla === "pantalla-ultimos") subt.textContent = "Últimos sorteos";
+    if (idPantalla === "pantalla-cabala") subt.textContent = "Cabulear con una fecha";
     window.scrollTo(0,0);
   }
 
@@ -3532,6 +3558,155 @@ function abrirDetalleJugada(indice){
     }
   }
 
+
+  // ========= CABULEAR CON UNA FECHA: reutiliza HISTORIAL_COMPLETO =========
+  // Se crea un índice de referencias, sin duplicar los resultados ni agregar sorteos al código.
+  let cabalaIndice = null;
+  let cabalaLimites = null;
+
+  function obtenerIndiceCabala(){
+    if(cabalaIndice) return cabalaIndice;
+    cabalaIndice = (Array.isArray(HISTORIAL_COMPLETO) ? HISTORIAL_COMPLETO : [])
+      .map(function(s){
+        return {fecha:toISOFromDDMMYYYY(s.fechaTexto), sorteo:s};
+      })
+      .filter(function(item){ return /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(item.fecha); })
+      .sort(function(a,b){
+        if(a.fecha !== b.fecha) return a.fecha < b.fecha ? -1 : 1;
+        return Number(a.sorteo.numeroSorteo) - Number(b.sorteo.numeroSorteo);
+      });
+    return cabalaIndice;
+  }
+
+  function prepararPantallaCabala(){
+    const indice = obtenerIndiceCabala();
+    const input = safeGet("cabala-fecha");
+    const estado = safeGet("cabala-estado");
+    const resultados = safeGet("cabala-resultados");
+    if(!indice.length){
+      input.disabled = true;
+      estado.textContent = "No hay sorteos disponibles en el historial.";
+      resultados.innerHTML = "";
+      return;
+    }
+    cabalaLimites = {min:indice[0].fecha, max:indice[indice.length-1].fecha};
+    input.min = cabalaLimites.min;
+    input.max = cabalaLimites.max;
+    input.disabled = false;
+    if(!input.value){
+      estado.textContent = "Consultá desde " + indice[0].sorteo.fechaTexto + " hasta " + indice[indice.length-1].sorteo.fechaTexto + ".";
+      resultados.innerHTML = "";
+    }else{
+      buscarSorteosCabala();
+    }
+  }
+
+  function renderizarTarjetaCabala(item){
+    const sorteo = item.sorteo;
+    const tarjeta = document.createElement("div");
+    tarjeta.className = "card";
+    tarjeta.style.marginTop = "10px";
+    tarjeta.style.padding = "12px";
+
+    const cabecera = document.createElement("div");
+    cabecera.style.textAlign = "center";
+    cabecera.style.fontWeight = "900";
+    cabecera.style.fontSize = "15px";
+    cabecera.textContent = sorteo.fechaTexto + " • Sorteo " + sorteo.numeroSorteo;
+    tarjeta.appendChild(cabecera);
+
+    (sorteo.juegos || []).forEach(function(j){
+      const seccion = document.createElement("div");
+      seccion.className = "section";
+      seccion.style.marginTop = "8px";
+      const titulo = document.createElement("div");
+      titulo.className = "section-header";
+      titulo.textContent = j.nombre || "Resultados";
+      const bolas = document.createElement("div");
+      bolas.className = "section-body";
+      (j.numeros || []).forEach(function(n){
+        const bola = document.createElement("div");
+        bola.className = "ball";
+        bola.textContent = fmt2(n);
+        bolas.appendChild(bola);
+      });
+      seccion.appendChild(titulo);
+      seccion.appendChild(bolas);
+      tarjeta.appendChild(seccion);
+    });
+
+    // Mostrar Premio Extra únicamente cuando existe en ese registro histórico.
+    if(sorteo.pozoExtra && Array.isArray(sorteo.pozoExtra.numeros) && sorteo.pozoExtra.numeros.length){
+      const seccion = document.createElement("div");
+      seccion.className = "section";
+      seccion.style.marginTop = "8px";
+      const titulo = document.createElement("div");
+      titulo.className = "section-header";
+      titulo.textContent = "Premio Extra";
+      const bolas = document.createElement("div");
+      bolas.className = "section-body";
+      sorteo.pozoExtra.numeros.forEach(function(n){
+        const bola = document.createElement("div");
+        bola.className = "ball";
+        bola.textContent = fmt2(n);
+        bolas.appendChild(bola);
+      });
+      seccion.appendChild(titulo);
+      seccion.appendChild(bolas);
+      tarjeta.appendChild(seccion);
+    }
+    return tarjeta;
+  }
+
+  function agregarGrupoCabala(destino, titulo, sorteos){
+    if(!sorteos.length) return;
+    const encabezado = document.createElement("div");
+    encabezado.style.fontSize = "14px";
+    encabezado.style.fontWeight = "900";
+    encabezado.style.marginTop = "15px";
+    encabezado.textContent = titulo;
+    destino.appendChild(encabezado);
+    sorteos.forEach(function(item){ destino.appendChild(renderizarTarjetaCabala(item)); });
+  }
+
+  function buscarSorteosCabala(){
+    const input = safeGet("cabala-fecha");
+    const estado = safeGet("cabala-estado");
+    const resultados = safeGet("cabala-resultados");
+    const fecha = input.value;
+    resultados.innerHTML = "";
+    if(!fecha){ estado.textContent = "Elegí una fecha para consultar."; return; }
+    if(!cabalaLimites || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(fecha) ||
+       fecha < cabalaLimites.min || fecha > cabalaLimites.max || !input.validity.valid){
+      estado.textContent = "Elegí una fecha dentro del historial disponible.";
+      return;
+    }
+
+    const indice = obtenerIndiceCabala();
+    // Posición del primer concurso cuya fecha es igual o posterior a la elegida.
+    let izquierda = 0, derecha = indice.length;
+    while(izquierda < derecha){
+      const medio = (izquierda + derecha) >>> 1;
+      if(indice[medio].fecha < fecha) izquierda = medio + 1;
+      else derecha = medio;
+    }
+
+    if(izquierda < indice.length && indice[izquierda].fecha === fecha){
+      estado.textContent = "Sorteo encontrado para la fecha elegida.";
+      let pos = izquierda;
+      while(pos < indice.length && indice[pos].fecha === fecha){
+        resultados.appendChild(renderizarTarjetaCabala(indice[pos]));
+        pos++;
+      }
+      return;
+    }
+
+    estado.textContent = "No hubo sorteo ese día. Estos son los más cercanos.";
+    // Tres anteriores y tres posteriores, sin duplicados y en orden cronológico.
+    agregarGrupoCabala(resultados, "Sorteos anteriores", indice.slice(Math.max(0,izquierda-3), izquierda));
+    agregarGrupoCabala(resultados, "Sorteos posteriores", indice.slice(izquierda, izquierda+3));
+  }
+
   // ========= Inicio =========
   function bindEvents(){
     // Tema
@@ -3540,6 +3715,13 @@ function abrirDetalleJugada(indice){
     // Volver
     safeGet("btn-volver-jugadas").addEventListener("click", () => mostrarPantalla("pantalla-jugadas"));
     safeGet("btn-volver-ganaste").addEventListener("click", () => mostrarPantalla("pantalla-jugadas"));
+    safeGet("btn-volver-cabala").addEventListener("click", () => mostrarPantalla("pantalla-jugadas"));
+    safeGet("btn-ir-cabala").addEventListener("click", () => {
+      mostrarPantalla("pantalla-cabala");
+      prepararPantallaCabala();
+    });
+    safeGet("btn-buscar-cabala").addEventListener("click", buscarSorteosCabala);
+    safeGet("cabala-fecha").addEventListener("change", buscarSorteosCabala);
 
     // Agregar jugada
     safeGet("btn-abrir-selector").addEventListener("click", () => {
